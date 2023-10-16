@@ -486,7 +486,7 @@ Module.register("MMM-GoogleCalendar", {
       if (this.config.showLocation) {
         if (event.location) {
           const locationRow = document.createElement("tr");
-          locationRow.className = "normal xsmall light";
+          locationRow.className = "normal xsmall light align-right";
 
           if (this.config.displaySymbol) {
             const symbolCell = document.createElement("td");
