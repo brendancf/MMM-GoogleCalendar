@@ -23,11 +23,11 @@
 }
 
 .calendar .date_header {
+  width:100%;
   background-color: antiquewhite;
   color: darkslategrey;
   font-weight: bold;
-}
-
-.calendar .date_header td {
-  padding-left: 5px;
+  padding: 5px;
+  margin-top: 10px;
+  margin-bottom: 10px;
 }

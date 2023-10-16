@@ -216,14 +216,16 @@ Module.register("MMM-GoogleCalendar", {
       if (this.config.timeFormat === "dateheaders") {
         if (lastSeenDate !== dateAsString) {
           const dateRow = document.createElement("tr");
-          dateRow.className = "date_header";
 
           const dateCell = document.createElement("td");
           dateCell.colSpan = "3";
-          dateCell.innerHTML = dateAsString;
-          dateCell.style.paddingTop = "10px";
           dateRow.appendChild(dateCell);
           wrapper.appendChild(dateRow);
+
+          const dateCellContent = document.createElement("div");
+          dateCellContent.innerHTML = dateAsString;
+          dateCellContent.className = "date_header";
+          dateCell.appendChild(dateCellContent);
 
           if (this.config.fade && index >= startFade) {
             //fading
