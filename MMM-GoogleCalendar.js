@@ -38,7 +38,7 @@ Module.register("MMM-GoogleCalendar", {
     colored: false,
     coloredSymbolOnly: false,
     customEvents: [], // Array of {keyword: "", symbol: "", color: ""} where Keyword is a regexp and symbol/color are to be applied for matched
-    tableClass: "small",
+    tableClass: "medium calendar",
     calendars: [
       {
         symbol: "calendar",
@@ -216,7 +216,7 @@ Module.register("MMM-GoogleCalendar", {
       if (this.config.timeFormat === "dateheaders") {
         if (lastSeenDate !== dateAsString) {
           const dateRow = document.createElement("tr");
-          dateRow.className = "normal";
+          dateRow.className = "date_header";
 
           const dateCell = document.createElement("td");
           dateCell.colSpan = "3";

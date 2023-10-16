@@ -21,3 +21,13 @@
   text-align: right;
   vertical-align: top;
 }
+
+.calendar .date_header {
+  background-color: antiquewhite;
+  color: darkslategrey;
+  font-weight: bold;
+}
+
+.calendar .date_header td {
+  padding-left: 5px;
+}
