@@ -14,6 +14,7 @@ module.exports = NodeHelper.create({
     this.isHelperActive = true;
 
     this.calendarService;
+    this.config = {};
   },
 
   stop: function () {
@@ -22,27 +23,43 @@ module.exports = NodeHelper.create({
 
   // Override socketNotificationReceived method.
   socketNotificationReceived: function (notification, payload) {
-    if (notification === "MODULE_READY") {
-      if (!this.calendarService) {
-        if (payload.queryParams) {
-          // if payload is sent, user has authenticated
-          const params = new URLSearchParams(payload.queryParams);
-          this.authenticateWithQueryParams(params);
+
+    Log.info(`Notification ${notification}`)
+
+    switch (notification) {
+      case "INIT":
+        this.initializeAfterLoading(payload);
+        break;
+
+      case "MODULE_READY":
+        if (!this.calendarService) {
+          if (payload.queryParams) {
+            // if payload is sent, user has authenticated
+            const params = new URLSearchParams(payload.queryParams);
+            this.authenticateWithQueryParams(params);
+          } else {
+            this.authenticate();
+          }
         } else {
-          this.authenticate();
+          this.sendSocketNotification("SERVICE_READY", {});
         }
-      } else {
-        this.sendSocketNotification("SERVICE_READY", {});
-      }
+        break;
+      
+      case "ADD_CALENDAR":
+        this.fetchCalendar(
+          payload.calendarID,
+          payload.fetchInterval,
+          payload.maximumEntries,
+          payload.id
+        );
+        break;
     }
-    if (notification === "ADD_CALENDAR") {
-      this.fetchCalendar(
-        payload.calendarID,
-        payload.fetchInterval,
-        payload.maximumEntries,
-        payload.id
-      );
-    }
+  },
+
+  initializeAfterLoading: function (config) {
+    this.config = config;
+
+    Log.info(`Config loaded ${JSON.toString(config)}`)
   },
 
   authenticateWithQueryParams: function (params) {
@@ -237,11 +254,19 @@ module.exports = NodeHelper.create({
             error_type
           });
         } else {
-          const events = res.data.items;
+          const unfilteredEvents = res.data.items;
+
           Log.info(
-            `${this.name}: ${events.length} events loaded for ${calendarID}`
+            `${this.name}: ${unfilteredEvents.length} events loaded for ${calendarID}`
           );
-          this.broadcastEvents(events, identifier, calendarID); 
+
+          const filteredEvents = this.filterEvents(unfilteredEvents)
+
+          Log.info(
+            `${this.name}: ${filteredEvents.length} events after filtering for ${calendarID}`
+          );
+
+          this.broadcastEvents(filteredEvents, identifier, calendarID); 
         }
         
         this.scheduleNextCalendarFetch(
@@ -253,6 +278,92 @@ module.exports = NodeHelper.create({
       }
     );
   },
+
+  filterEvents: function(events, config) {
+
+    return events.filter(event => { return !this.filterByTitle(event) })
+  },
+
+  filterByTitle: function(event) {
+
+    const {
+      excludedEvents
+    } = this.config
+
+    const title = event.summary;
+    Log.debug(`title: ${title}`);
+
+    let excluded = false,
+      dateFilter = null;
+
+    for (let f in excludedEvents) {
+      let filter =excludedEvents[f],
+        testTitle = title.toLowerCase(),
+        until = null,
+        useRegex = false,
+        regexFlags = "g";
+
+      if (filter instanceof Object) {
+        if (typeof filter.until !== "undefined") {
+          until = filter.until;
+        }
+
+        if (typeof filter.regex !== "undefined") {
+          useRegex = filter.regex;
+        }
+
+        // If additional advanced filtering is added in, this section
+        // must remain last as we overwrite the filter object with the
+        // filterBy string
+        if (filter.caseSensitive) {
+          filter = filter.filterBy;
+          testTitle = title;
+        } else if (useRegex) {
+          filter = filter.filterBy;
+          testTitle = title;
+          regexFlags += "i";
+        } else {
+          filter = filter.filterBy.toLowerCase();
+        }
+      } else {
+        filter = filter.toLowerCase();
+      }
+
+      if (this.titleFilterApplies(testTitle, filter, useRegex, regexFlags)) {
+        if (until) {
+          dateFilter = until;
+        } else {
+          Log.info(`Filter event ${testTitle}`)
+          excluded = true;
+        }
+        break;
+      }
+    }
+
+    return excluded
+  },
+
+  /**
+	 * Determines if the user defined title filter should apply
+	 * @param {string} title the title of the event
+	 * @param {string} filter the string to look for, can be a regex also
+	 * @param {boolean} useRegex true if a regex should be used, otherwise it just looks for the filter as a string
+	 * @param {string} regexFlags flags that should be applied to the regex
+	 * @returns {boolean} True if the title should be filtered out, false otherwise
+	 */
+	titleFilterApplies: function (title, filter, useRegex, regexFlags) {
+		if (useRegex) {
+			let regexFilter = filter;
+			// Assume if leading slash, there is also trailing slash
+			if (filter[0] === "/") {
+				// Strip leading and trailing slashes
+				regexFilter = filter.substr(1).slice(0, -1);
+			}
+			return new RegExp(regexFilter, regexFlags).test(title);
+		} else {
+			return title.includes(filter);
+		}
+	},
 
   scheduleNextCalendarFetch: function (
     calendarID,

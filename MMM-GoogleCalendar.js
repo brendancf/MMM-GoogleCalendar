@@ -82,6 +82,8 @@ Module.register("MMM-GoogleCalendar", {
   start: function () {
     Log.info("Starting module: " + this.name);
 
+    this.sendSocketNotification("INIT", this.config);
+
     // Set locale.
     moment.updateLocale(
       config.language,
