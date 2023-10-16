@@ -218,7 +218,7 @@ Module.register("MMM-GoogleCalendar", {
           const dateRow = document.createElement("tr");
 
           const dateCell = document.createElement("td");
-          dateCell.colSpan = "3";
+          dateCell.colSpan = this.config.displaySymbol ? "3" : "2";
           dateRow.appendChild(dateCell);
           wrapper.appendChild(dateRow);
 
@@ -285,10 +285,6 @@ Module.register("MMM-GoogleCalendar", {
           symbolWrapper.appendChild(symbol);
         });
         eventWrapper.appendChild(symbolWrapper);
-      } else if (this.config.timeFormat === "dateheaders") {
-        const blankCell = document.createElement("td");
-        blankCell.innerHTML = "&nbsp;&nbsp;&nbsp;";
-        eventWrapper.appendChild(blankCell);
       }
 
       const titleWrapper = document.createElement("td");
