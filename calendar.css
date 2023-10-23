@@ -24,8 +24,8 @@
 
 .calendar .date_header {
   width:100%;
-  background-color: antiquewhite;
-  color: darkslategrey;
+  background-color: rgba(85, 144, 247, 0.501);
+  color: white;
   font-weight: bold;
   padding: 5px;
   margin-top: 10px;
