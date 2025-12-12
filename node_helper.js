@@ -237,10 +237,17 @@ module.exports = NodeHelper.create({
       },
       (err, res) => {
         if (err) {
+          // Log error without exposing sensitive config data (client_secret, tokens)
+          const safeError = {
+            message: err.message,
+            code: err.code,
+            errno: err.errno,
+            type: err.type
+          };
           Log.error(
             "MMM-GoogleCalendar Error. Could not fetch calendar: ",
             calendarID,
-            err
+            safeError
           );
           let error_type = NodeHelper.checkFetchError(err);
 		  if (error_type === 'MODULE_ERROR_UNSPECIFIED') {
