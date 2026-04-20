@@ -212,6 +212,7 @@ Module.register("MMM-GoogleCalendar", {
     let lastSeenDate = "";
 
     events.forEach((event, index) => {
+      const customEventsRules = this.customEventsForEvent(event);
       const dateAsString = moment(event.startDate).format(
         this.config.dateFormat
       );
@@ -261,18 +262,18 @@ Module.register("MMM-GoogleCalendar", {
 
         const symbols = this.symbolsForEvent(event);
         // If symbols are displayed and custom symbol is set, replace event symbol
-        if (this.config.displaySymbol && this.config.customEvents.length > 0) {
-          for (let ev in this.config.customEvents) {
+        if (this.config.displaySymbol && customEventsRules.length > 0) {
+          for (let ev in customEventsRules) {
             if (
-              typeof this.config.customEvents[ev].symbol !== "undefined" &&
-              this.config.customEvents[ev].symbol !== ""
+              typeof customEventsRules[ev].symbol !== "undefined" &&
+              customEventsRules[ev].symbol !== ""
             ) {
               let needle = new RegExp(
-                this.config.customEvents[ev].keyword,
+                customEventsRules[ev].keyword,
                 "gi"
               );
               if (needle.test(event.title)) {
-                symbols[0] = this.config.customEvents[ev].symbol;
+                symbols[0] = customEventsRules[ev].symbol;
                 break;
               }
             }
@@ -307,24 +308,24 @@ Module.register("MMM-GoogleCalendar", {
       }
 
       // Color events if custom color is specified
-      if (this.config.customEvents.length > 0) {
-        for (let ev in this.config.customEvents) {
+      if (customEventsRules.length > 0) {
+        for (let ev in customEventsRules) {
           if (
-            typeof this.config.customEvents[ev].color !== "undefined" &&
-            this.config.customEvents[ev].color !== ""
+            typeof customEventsRules[ev].color !== "undefined" &&
+            customEventsRules[ev].color !== ""
           ) {
-            let needle = new RegExp(this.config.customEvents[ev].keyword, "gi");
+            let needle = new RegExp(customEventsRules[ev].keyword, "gi");
             if (needle.test(event.title)) {
               // Respect parameter ColoredSymbolOnly also for custom events
               if (!this.config.coloredSymbolOnly) {
                 eventWrapper.style.cssText =
-                  "color:" + this.config.customEvents[ev].color;
+                  "color:" + customEventsRules[ev].color;
                 titleWrapper.style.cssText =
-                  "color:" + this.config.customEvents[ev].color;
+                  "color:" + customEventsRules[ev].color;
               }
               if (this.config.displaySymbol) {
                 symbolWrapper.style.cssText =
-                  "color:" + this.config.customEvents[ev].color;
+                  "color:" + customEventsRules[ev].color;
               }
               break;
             }
@@ -335,7 +336,7 @@ Module.register("MMM-GoogleCalendar", {
       titleWrapper.innerHTML =
         this.titleTransform(
           event.title,
-          this.config.titleReplace,
+          this.titleReplaceForCalendar(event.calendarID),
           this.config.wrapEvents,
           this.config.maxTitleLength,
           this.config.maxTitleLines
@@ -483,7 +484,7 @@ Module.register("MMM-GoogleCalendar", {
         eventWrapper.style.opacity = 1 - (1 / fadeSteps) * currentFadeStep;
       }
 
-      if (this.config.showLocation) {
+      if (this.showLocationForEvent(event)) {
         if (event.location) {
           const locationRow = document.createElement("tr");
           locationRow.className = "normal xsmall light align-right";
@@ -991,6 +992,52 @@ Module.register("MMM-GoogleCalendar", {
    */
   capFirst: function (string) {
     return string.charAt(0).toUpperCase() + string.slice(1);
+  },
+
+  /**
+   * titleReplace for one calendar: use calendars[].titleReplace when set, else module default.
+   */
+  titleReplaceForCalendar: function (calendarID) {
+    for (const calendar of this.config.calendars) {
+      if (
+        calendar.calendarID === calendarID &&
+        Object.prototype.hasOwnProperty.call(calendar, "titleReplace")
+      ) {
+        return calendar.titleReplace;
+      }
+    }
+    return this.config.titleReplace;
+  },
+
+  /**
+   * customEvents for one event: use calendars[].customEvents when set on that calendar,
+   * else module-level customEvents.
+   */
+  customEventsForEvent: function (event) {
+    for (const calendar of this.config.calendars) {
+      if (
+        calendar.calendarID === event.calendarID &&
+        Object.prototype.hasOwnProperty.call(calendar, "customEvents")
+      ) {
+        return calendar.customEvents;
+      }
+    }
+    return this.config.customEvents;
+  },
+
+  /**
+   * showLocation for one event: calendars[].showLocation overrides module default when set.
+   */
+  showLocationForEvent: function (event) {
+    for (const calendar of this.config.calendars) {
+      if (
+        calendar.calendarID === event.calendarID &&
+        Object.prototype.hasOwnProperty.call(calendar, "showLocation")
+      ) {
+        return calendar.showLocation;
+      }
+    }
+    return this.config.showLocation;
   },
 
   /**
