@@ -484,34 +484,33 @@ Module.register("MMM-GoogleCalendar", {
         eventWrapper.style.opacity = 1 - (1 / fadeSteps) * currentFadeStep;
       }
 
-      if (this.showLocationForEvent(event)) {
-        if (event.location) {
-          const locationRow = document.createElement("tr");
-          locationRow.className = "normal xsmall light align-right";
+      const locationDisplayText = this.getDisplayedLocationText(event);
+      if (locationDisplayText) {
+        const locationRow = document.createElement("tr");
+        locationRow.className = "normal xsmall light align-right";
 
-          if (this.config.displaySymbol) {
-            const symbolCell = document.createElement("td");
-            locationRow.appendChild(symbolCell);
-          }
+        if (this.config.displaySymbol) {
+          const symbolCell = document.createElement("td");
+          locationRow.appendChild(symbolCell);
+        }
 
-          const descCell = document.createElement("td");
-          descCell.className = "location";
-          descCell.colSpan = "2";
-          descCell.innerHTML = this.titleTransform(
-            event.location,
-            this.config.locationTitleReplace,
-            this.config.wrapLocationEvents,
-            this.config.maxLocationTitleLength,
-            this.config.maxEventTitleLines
-          );
-          locationRow.appendChild(descCell);
+        const descCell = document.createElement("td");
+        descCell.className = "location";
+        descCell.colSpan = "2";
+        descCell.innerHTML = this.titleTransform(
+          locationDisplayText,
+          this.config.locationTitleReplace,
+          this.config.wrapLocationEvents,
+          this.config.maxLocationTitleLength,
+          this.config.maxEventTitleLines
+        );
+        locationRow.appendChild(descCell);
 
-          wrapper.appendChild(locationRow);
+        wrapper.appendChild(locationRow);
 
-          if (index >= startFade) {
-            currentFadeStep = index - startFade;
-            locationRow.style.opacity = 1 - (1 / fadeSteps) * currentFadeStep;
-          }
+        if (index >= startFade) {
+          currentFadeStep = index - startFade;
+          locationRow.style.opacity = 1 - (1 / fadeSteps) * currentFadeStep;
         }
       }
     });
@@ -737,6 +736,8 @@ Module.register("MMM-GoogleCalendar", {
       }
       events = newEvents;
     }
+
+    events = this.mergeAdjacentBusyPlaceholders(events);
 
     return events.slice(0, this.config.maximumEntries);
   },
@@ -1026,18 +1027,242 @@ Module.register("MMM-GoogleCalendar", {
   },
 
   /**
-   * showLocation for one event: calendars[].showLocation overrides module default when set.
+   * calendars[].showLocation overrides module default: true | false | "physical"
+   * ("physical" = show only non-virtual places; strips common video URLs from mixed text).
    */
-  showLocationForEvent: function (event) {
+  showLocationPolicyForCalendar: function (calendarID) {
     for (const calendar of this.config.calendars) {
       if (
-        calendar.calendarID === event.calendarID &&
+        calendar.calendarID === calendarID &&
         Object.prototype.hasOwnProperty.call(calendar, "showLocation")
       ) {
         return calendar.showLocation;
       }
     }
     return this.config.showLocation;
+  },
+
+  locationLooksVirtual: function (text) {
+    const t = (text || "").trim();
+    if (!t) return true;
+    const lower = t.toLowerCase();
+
+    if (/^https?:\/\/\S+$/i.test(t)) return true;
+
+    const markers = [
+      "zoom.us",
+      "zoom.com/",
+      "teams.microsoft.com",
+      "teams.live.com",
+      "meet.google.com",
+      "webex.com",
+      "gotomeeting",
+      "bluejeans",
+      "whereby.com",
+      "slack.com/call",
+      "skype:",
+      "facetime:",
+      "ringcentral.com",
+      "chime.aws",
+      "amazonchime",
+      "tel:",
+      "passcode:",
+      "dial-in",
+      "dial in",
+      "meeting id:",
+      "conference id:"
+    ];
+    for (let i = 0; i < markers.length; i++) {
+      if (lower.includes(markers[i])) return true;
+    }
+
+    if (/^microsoft teams( meeting)?$/i.test(t)) return true;
+    if (/^google meet\b/i.test(t) && !/\d/.test(t)) return true;
+
+    return false;
+  },
+
+  stripVideoUrls: function (s) {
+    return String(s || "")
+      .replace(/https?:\/\/[^\s]+/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  },
+
+  physicalLocationDisplay: function (locationText) {
+    const raw = String(locationText || "").trim();
+    if (!raw) return null;
+
+    const chunks = raw
+      .split(/\n|\r\n|\s*----+\s*/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+    const pieces = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (this.locationLooksVirtual(chunk)) {
+        const stripped = this.stripVideoUrls(chunk);
+        if (stripped && !this.locationLooksVirtual(stripped)) {
+          pieces.push(stripped);
+        }
+        continue;
+      }
+      const cleaned = this.stripVideoUrls(chunk);
+      if (cleaned) pieces.push(cleaned);
+    }
+
+    if (pieces.length === 0) return null;
+    return pieces.join(" · ");
+  },
+
+  getDisplayedLocationText: function (event) {
+    if (!event.location || !String(event.location).trim()) return null;
+
+    const policy = this.showLocationPolicyForCalendar(event.calendarID);
+    if (policy === false) return null;
+
+    if (policy === "physical") {
+      return this.physicalLocationDisplay(event.location);
+    }
+
+    return String(event.location).trim();
+  },
+
+  /**
+   * Transformed title as shown (no repeating-count suffix).
+   */
+  getPlaceholderBusyLabel: function (event) {
+    return this.titleTransform(
+      event.title,
+      this.titleReplaceForCalendar(event.calendarID),
+      this.config.wrapEvents,
+      this.config.maxTitleLength,
+      this.config.maxTitleLines
+    );
+  },
+
+  isAllDayCalendarEvent: function (event) {
+    return !!(event.start && event.start.date && !event.start.dateTime);
+  },
+
+  mergeBusyPlaceholderForCalendar: function (calendarID) {
+    for (const calendar of this.config.calendars) {
+      if (
+        calendar.calendarID === calendarID &&
+        Object.prototype.hasOwnProperty.call(
+          calendar,
+          "mergeBusyPlaceholderTitle"
+        )
+      ) {
+        return calendar.mergeBusyPlaceholderTitle;
+      }
+    }
+    return "Work — Busy";
+  },
+
+  mergeBusyGapMsForCalendar: function (calendarID) {
+    for (const calendar of this.config.calendars) {
+      if (
+        calendar.calendarID === calendarID &&
+        typeof calendar.mergeBusyGapMs === "number"
+      ) {
+        return calendar.mergeBusyGapMs;
+      }
+    }
+    return 120000;
+  },
+
+  /**
+   * Collapse overlapping / nearly-touching placeholder busy blocks (same calendar) into one row.
+   * calendars[].mergeAdjacentBusy enables; skips events with a displayed location or non-placeholder title.
+   */
+  mergeAdjacentBusyPlaceholders: function (events) {
+    const mergeCalendars = this.config.calendars.filter(
+      (c) => c.mergeAdjacentBusy === true
+    );
+    if (!mergeCalendars.length) return events;
+
+    const mergedGroups = [];
+
+    for (let c = 0; c < mergeCalendars.length; c++) {
+      const calId = mergeCalendars[c].calendarID;
+      const gap = this.mergeBusyGapMsForCalendar(calId);
+      const wantLabel = this.mergeBusyPlaceholderForCalendar(calId);
+
+      const cand = events
+        .map((e, idx) => ({ e, idx }))
+        .filter(({ e }) => {
+          if (e.calendarID !== calId) return false;
+          if (this.getDisplayedLocationText(e)) return false;
+          if (this.isAllDayCalendarEvent(e)) return false;
+          return this.getPlaceholderBusyLabel(e) === wantLabel;
+        });
+
+      if (cand.length < 2) continue;
+
+      let ci = 0;
+      while (ci < cand.length) {
+        let blockEnd = cand[ci].e.endDate;
+        const indices = [cand[ci].idx];
+        let cj = ci + 1;
+        while (cj < cand.length) {
+          const next = cand[cj].e;
+          if (next.startDate <= blockEnd + gap) {
+            blockEnd = Math.max(blockEnd, next.endDate);
+            indices.push(cand[cj].idx);
+            cj++;
+          } else {
+            break;
+          }
+        }
+        if (indices.length > 1) {
+          const starts = indices.map((idx) => events[idx].startDate);
+          const ends = indices.map((idx) => events[idx].endDate);
+          mergedGroups.push({
+            indices,
+            startDate: Math.min.apply(null, starts),
+            endDate: Math.max.apply(null, ends),
+            template: events[indices[0]]
+          });
+        }
+        ci = cj;
+      }
+    }
+
+    if (!mergedGroups.length) return events;
+
+    const skip = new Set();
+    const insertMerged = new Map();
+
+    for (let g = 0; g < mergedGroups.length; g++) {
+      const group = mergedGroups[g];
+      for (let k = 1; k < group.indices.length; k++) {
+        skip.add(group.indices[k]);
+      }
+      const merged = JSON.parse(JSON.stringify(group.template));
+      merged.startDate = group.startDate;
+      merged.endDate = group.endDate;
+      merged.summary = group.template.summary;
+      merged.title = group.template.title;
+      if (merged.location) delete merged.location;
+      insertMerged.set(group.indices[0], merged);
+    }
+
+    const out = [];
+    for (let i = 0; i < events.length; i++) {
+      if (skip.has(i)) continue;
+      if (insertMerged.has(i)) {
+        out.push(insertMerged.get(i));
+        continue;
+      }
+      out.push(events[i]);
+    }
+
+    out.sort(function (a, b) {
+      return a.startDate - b.startDate;
+    });
+    return out;
   },
 
   /**
