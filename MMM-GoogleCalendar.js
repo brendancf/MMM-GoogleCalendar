@@ -1089,6 +1089,57 @@ Module.register("MMM-GoogleCalendar", {
       .trim();
   },
 
+  /**
+   * Keep venue / label + street-style segments; drop trailing country, US state/ZIP, and city when a street is present.
+   */
+  trimLocationToVenueAndStreet: function (raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+
+    let parts = s.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length <= 1) return s;
+
+    const countryRe =
+      /^(USA|US|U\.S\.A\.|United States|Canada|UK|U\.K\.|United Kingdom|Mexico)$/i;
+    const zipUsRe = /^\d{5}(-\d{4})?$/;
+    const stateZipUsRe = /^[A-Z]{2}\s+\d{5}(-\d{4})?$/i;
+    const stateOnlyRe = /^[A-Z]{2}$/;
+
+    const looksLikeStreet = (seg) =>
+      /^\d+\s+/.test(seg) ||
+      /\b(st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|way|ct|court|pl|place|pkwy|parkway|hwy|highway|ne|nw|se|sw)\b/i.test(
+        seg
+      );
+
+    while (parts.length > 1) {
+      const last = parts[parts.length - 1];
+      if (countryRe.test(last)) {
+        parts.pop();
+        continue;
+      }
+      if (stateZipUsRe.test(last)) {
+        parts.pop();
+        continue;
+      }
+      if (zipUsRe.test(last)) {
+        parts.pop();
+        continue;
+      }
+      if (stateOnlyRe.test(last)) {
+        parts.pop();
+        continue;
+      }
+      const earlier = parts.slice(0, -1);
+      if (earlier.some(looksLikeStreet)) {
+        parts.pop();
+        continue;
+      }
+      break;
+    }
+
+    return parts.join(", ");
+  },
+
   physicalLocationDisplay: function (locationText) {
     const raw = String(locationText || "").trim();
     if (!raw) return null;
@@ -1122,11 +1173,20 @@ Module.register("MMM-GoogleCalendar", {
     const policy = this.showLocationPolicyForCalendar(event.calendarID);
     if (policy === false) return null;
 
-    if (policy === "physical") {
-      return this.physicalLocationDisplay(event.location);
-    }
+    let text =
+      policy === "physical"
+        ? this.physicalLocationDisplay(event.location)
+        : String(event.location).trim();
 
-    return String(event.location).trim();
+    if (!text) return null;
+
+    const shortened = text
+      .split(/\s*·\s*/)
+      .map((chunk) => this.trimLocationToVenueAndStreet(chunk))
+      .filter(Boolean)
+      .join(" · ");
+
+    return shortened || null;
   },
 
   /**
