@@ -5,7 +5,7 @@
   "description": "Display your Google calendars in MagicMirror (including google's family calendar) without using iCals nor any public calendar. ",
   "main": "MMM-GoogleCalendar.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/*.test.js"
   },
   "repository": {
     "type": "git",

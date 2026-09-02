@@ -6,18 +6,37 @@ const Log = require("logger");
 
 const TOKEN_PATH = "/token.json";
 
+// A request that has not come back by then is treated as failed, so the refresh
+// loop can recover instead of waiting on it forever. See DESIGN-fetch-resilience.md.
+const FETCH_TIMEOUT_FLOOR = 30 * 1000;
+
 module.exports = NodeHelper.create({
   // Override start method.
   start: function () {
     Log.log("Starting node helper for: " + this.name);
     this.isHelperActive = true;
 
+    // One pending fetch timer per "identifier|calendarID".
+    this.fetchTimers = {};
     this.calendarService;
     this.config = {};
   },
 
   stop: function () {
     this.isHelperActive = false;
+    for (const key in this.fetchTimers) {
+      this.clearTimeout(this.fetchTimers[key]);
+    }
+    this.fetchTimers = {};
+  },
+
+  // Timer indirection so tests can drive the refresh loop without real time.
+  setTimeout: function (callback, delay) {
+    return setTimeout(callback, delay);
+  },
+
+  clearTimeout: function (timer) {
+    clearTimeout(timer);
   },
 
   // Override socketNotificationReceived method.
@@ -221,68 +240,110 @@ module.exports = NodeHelper.create({
    * @param {number} maximumEntries The maximum number of events fetched.
    * @param {string} identifier ID of the module
    */
-  fetchCalendar: function (
+  fetchCalendar: async function (
     calendarID,
     fetchInterval,
     maximumEntries,
     identifier
   ) {
-    this.calendarService.events.list(
-      {
-        calendarId: calendarID,
-        timeMin: new Date().toISOString(),
-        maxResults: maximumEntries,
-        singleEvents: true,
-        orderBy: "startTime"
-      },
-      (err, res) => {
-        if (err) {
-          // Log error without exposing sensitive config data (client_secret, tokens)
-          const safeError = {
-            message: err.message,
-            code: err.code,
-            errno: err.errno,
-            type: err.type
-          };
-          Log.error(
-            "MMM-GoogleCalendar Error. Could not fetch calendar: ",
-            calendarID,
-            safeError
-          );
-          let error_type = NodeHelper.checkFetchError(err);
-		  if (error_type === 'MODULE_ERROR_UNSPECIFIED') {
-			  error_type = this.checkForHTTPError(err) || error_type;
-		  }
+    try {
+      const res = await this.withTimeout(
+        () =>
+          this.calendarService.events.list({
+            calendarId: calendarID,
+            timeMin: new Date().toISOString(),
+            maxResults: maximumEntries,
+            singleEvents: true,
+            orderBy: "startTime"
+          }),
+        Math.max(FETCH_TIMEOUT_FLOOR, Math.floor(fetchInterval / 2))
+      );
 
-		  // send error to module
-          this.sendSocketNotification("CALENDAR_ERROR", {
-            id: identifier,
-            error_type
-          });
-        } else {
-          const unfilteredEvents = res.data.items;
+      const unfilteredEvents = res.data.items;
 
-          Log.info(
-            `${this.name}: ${unfilteredEvents.length} events loaded for ${calendarID}`
-          );
+      Log.info(
+        `${this.name}: ${unfilteredEvents.length} events loaded for ${calendarID}`
+      );
 
-          const filteredEvents = this.filterEvents(unfilteredEvents)
+      const filteredEvents = this.filterEvents(unfilteredEvents);
 
-          Log.info(
-            `${this.name}: ${filteredEvents.length} events after filtering for ${calendarID}`
-          );
+      Log.info(
+        `${this.name}: ${filteredEvents.length} events after filtering for ${calendarID}`
+      );
 
-          this.broadcastEvents(filteredEvents, identifier, calendarID); 
-        }
-        
-        this.scheduleNextCalendarFetch(
+      this.broadcastEvents(filteredEvents, identifier, calendarID);
+    } catch (err) {
+      // Reporting the failure must never itself throw, or the reschedule below
+      // would be the only thing keeping this calendar alive.
+      try {
+        // Log error without exposing sensitive config data (client_secret, tokens)
+        const safeError = {
+          message: err.message,
+          code: err.code,
+          errno: err.errno,
+          type: err.type
+        };
+        Log.error(
+          "MMM-GoogleCalendar Error. Could not fetch calendar: ",
           calendarID,
-          fetchInterval,
-          maximumEntries,
-          identifier
+          safeError
+        );
+        let error_type = NodeHelper.checkFetchError(err);
+        if (error_type === "MODULE_ERROR_UNSPECIFIED") {
+          error_type = this.checkForHTTPError(err) || error_type;
+        }
+
+        // send error to module
+        this.sendSocketNotification("CALENDAR_ERROR", {
+          id: identifier,
+          error_type
+        });
+      } catch (reportingError) {
+        Log.error(
+          `${this.name}: could not report fetch failure for ${calendarID}`,
+          reportingError.message
         );
       }
-    );
+    } finally {
+      // Always, on every path out of this function. A calendar that stops
+      // rescheduling stops updating until MagicMirror is restarted.
+      this.scheduleNextCalendarFetch(
+        calendarID,
+        fetchInterval,
+        maximumEntries,
+        identifier
+      );
+    }
+  },
+
+  /**
+   * Resolve as `run()` does, but reject if it has not settled within `timeout` ms.
+   *
+   * @param {Function} run starts the request and returns its promise
+   * @param {number} timeout milliseconds to wait before giving up
+   * @returns {Promise} the request's result, or a rejection on expiry
+   */
+  withTimeout: function (run, timeout) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const timer = this.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`request timed out after ${timeout}ms`));
+      }, timeout);
+
+      const finish = (settle) => (value) => {
+        if (settled) return;
+        settled = true;
+        this.clearTimeout(timer);
+        settle(value);
+      };
+
+      // Promise.resolve().then(run) so a synchronous throw in run() rejects here
+      // rather than escaping to the caller.
+      Promise.resolve().then(run).then(finish(resolve), finish(reject));
+    });
   },
 
   filterEvents: function(events, config) {
@@ -296,7 +357,7 @@ module.exports = NodeHelper.create({
       excludedEvents
     } = this.config
 
-    const title = event.summary;
+    const title = event.summary || "";
     Log.debug(`title: ${title}`);
 
     let excluded = false,
@@ -377,17 +438,20 @@ module.exports = NodeHelper.create({
     maximumEntries,
     identifier
   ) {
-    var _this = this;
-    if (this.isHelperActive) {
-      setTimeout(function () {
-        _this.fetchCalendar(
-          calendarID,
-          fetchInterval,
-          maximumEntries,
-          identifier
-        );
-      }, fetchInterval);
+    const timerKey = `${identifier}|${calendarID}`;
+
+    // Never leave two loops running for the same calendar.
+    if (this.fetchTimers[timerKey]) {
+      this.clearTimeout(this.fetchTimers[timerKey]);
+      delete this.fetchTimers[timerKey];
     }
+
+    if (!this.isHelperActive) return;
+
+    this.fetchTimers[timerKey] = this.setTimeout(() => {
+      delete this.fetchTimers[timerKey];
+      this.fetchCalendar(calendarID, fetchInterval, maximumEntries, identifier);
+    }, fetchInterval);
   },
 
   broadcastEvents: function (events, identifier, calendarID) {
