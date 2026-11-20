@@ -1076,8 +1076,10 @@ Module.register("MMM-GoogleCalendar", {
       if (lower.includes(markers[i])) return true;
     }
 
-    if (/^microsoft teams( meeting)?$/i.test(t)) return true;
-    if (/^google meet\b/i.test(t) && !/\d/.test(t)) return true;
+    if (/\bzoom(\s+meeting|\s+call)?\b/i.test(t)) return true;
+    if (/\bmicrosoft\s+teams(\s+meeting)?\b/i.test(t)) return true;
+    if (/^google\s+meet\b/i.test(t) && !/\d/.test(t)) return true;
+    if (/\b(virtual|remote|online|slack\s+huddle)\b/i.test(t)) return true;
 
     return false;
   },
@@ -1234,8 +1236,21 @@ Module.register("MMM-GoogleCalendar", {
   },
 
   /**
+   * Determines if an event represents a placeholder/busy block eligible for merging.
+   */
+  isPlaceholderBusyEvent: function (event, calendarID) {
+    if (this.isAllDayCalendarEvent(event)) return false;
+    const wantLabel = this.mergeBusyPlaceholderForCalendar(calendarID);
+    const label = this.getPlaceholderBusyLabel(event);
+    if (!label) return true;
+    if (label === wantLabel) return true;
+    if (typeof label === "string" && label.startsWith("Work — ")) return true;
+    return false;
+  },
+
+  /**
    * Collapse overlapping / nearly-touching placeholder busy blocks (same calendar) into one row.
-   * calendars[].mergeAdjacentBusy enables; skips events with a displayed location or non-placeholder title.
+   * calendars[].mergeAdjacentBusy enables.
    */
   mergeAdjacentBusyPlaceholders: function (events) {
     const mergeCalendars = this.config.calendars.filter(
@@ -1248,15 +1263,12 @@ Module.register("MMM-GoogleCalendar", {
     for (let c = 0; c < mergeCalendars.length; c++) {
       const calId = mergeCalendars[c].calendarID;
       const gap = this.mergeBusyGapMsForCalendar(calId);
-      const wantLabel = this.mergeBusyPlaceholderForCalendar(calId);
 
       const cand = events
         .map((e, idx) => ({ e, idx }))
         .filter(({ e }) => {
           if (e.calendarID !== calId) return false;
-          if (this.getDisplayedLocationText(e)) return false;
-          if (this.isAllDayCalendarEvent(e)) return false;
-          return this.getPlaceholderBusyLabel(e) === wantLabel;
+          return this.isPlaceholderBusyEvent(e, calId);
         });
 
       if (cand.length < 2) continue;
@@ -1268,7 +1280,11 @@ Module.register("MMM-GoogleCalendar", {
         let cj = ci + 1;
         while (cj < cand.length) {
           const next = cand[cj].e;
-          if (next.startDate <= blockEnd + gap) {
+          const sameDay = moment(cand[ci].e.startDate).isSame(
+            moment(next.startDate),
+            "day"
+          );
+          if (sameDay && next.startDate <= blockEnd + gap) {
             blockEnd = Math.max(blockEnd, next.endDate);
             indices.push(cand[cj].idx);
             cj++;
@@ -1279,11 +1295,20 @@ Module.register("MMM-GoogleCalendar", {
         if (indices.length > 1) {
           const starts = indices.map((idx) => events[idx].startDate);
           const ends = indices.map((idx) => events[idx].endDate);
+          let bestIdx = indices[0];
+          for (let k = 0; k < indices.length; k++) {
+            const ev = events[indices[k]];
+            const lbl = this.getPlaceholderBusyLabel(ev);
+            if (lbl && /important/i.test(lbl)) {
+              bestIdx = indices[k];
+              break;
+            }
+          }
           mergedGroups.push({
             indices,
             startDate: Math.min.apply(null, starts),
             endDate: Math.max.apply(null, ends),
-            template: events[indices[0]]
+            template: events[bestIdx]
           });
         }
         ci = cj;
@@ -1344,6 +1369,9 @@ Module.register("MMM-GoogleCalendar", {
     maxTitleLength,
     maxTitleLines
   ) {
+    if (typeof title !== "string") {
+      title = "";
+    }
     for (let needle in titleReplace) {
       const replacement = titleReplace[needle];
 
