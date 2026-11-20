@@ -29,11 +29,7 @@ function createInstance(configOverrides = {}) {
           mergeAdjacentBusy: true,
           mergeBusyGapMs: 900000, // 15 min
           titleReplace: {
-            "/^(?=.*\\b(customer|client|external|investor|candidate|interview|pitch|demo|vip|executive)\\b)[\\s\\S]+$/i":
-              "Work — Important (please stay quiet)",
-            "/^(?=.*\\bboard\\s+meeting\\b)[\\s\\S]+$/i":
-              "Work — Important (please stay quiet)",
-            "/^(?!Work — Important)[\\s\\S]*$/": "Work — Busy"
+            "/^[\\s\\S]*$/": "Work — Busy"
           }
         },
         {
@@ -136,7 +132,7 @@ test("does NOT consolidate meetings with gap exceeding mergeBusyGapMs (30 min ga
   assert.strictEqual(merged.length, 2);
 });
 
-test("elevates title to Important when an Important meeting is adjacent to Busy", () => {
+test("consolidates back-to-back meetings into a single Work — Busy line item", () => {
   const inst = createInstance();
   const e1 = makeEvent("ellie@ridgedata.ai", "Prep sync", 9, 0, 9, 30);
   const e2 = makeEvent("ellie@ridgedata.ai", "Customer Demo with Acme", 9, 30, 10, 30);
@@ -145,7 +141,7 @@ test("elevates title to Important when an Important meeting is adjacent to Busy"
   assert.strictEqual(merged.length, 1);
   assert.strictEqual(merged[0].startDate, e1.startDate);
   assert.strictEqual(merged[0].endDate, e2.endDate);
-  assert.match(inst.getPlaceholderBusyLabel(merged[0]), /^Work — Important/);
+  assert.strictEqual(inst.getPlaceholderBusyLabel(merged[0]), "Work — Busy");
 });
 
 test("does not merge across midnight / days", () => {

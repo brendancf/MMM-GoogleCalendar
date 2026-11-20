@@ -1242,10 +1242,7 @@ Module.register("MMM-GoogleCalendar", {
     if (this.isAllDayCalendarEvent(event)) return false;
     const wantLabel = this.mergeBusyPlaceholderForCalendar(calendarID);
     const label = this.getPlaceholderBusyLabel(event);
-    if (!label) return true;
-    if (label === wantLabel) return true;
-    if (typeof label === "string" && label.startsWith("Work — ")) return true;
-    return false;
+    return !label || label === wantLabel;
   },
 
   /**
@@ -1295,20 +1292,11 @@ Module.register("MMM-GoogleCalendar", {
         if (indices.length > 1) {
           const starts = indices.map((idx) => events[idx].startDate);
           const ends = indices.map((idx) => events[idx].endDate);
-          let bestIdx = indices[0];
-          for (let k = 0; k < indices.length; k++) {
-            const ev = events[indices[k]];
-            const lbl = this.getPlaceholderBusyLabel(ev);
-            if (lbl && /important/i.test(lbl)) {
-              bestIdx = indices[k];
-              break;
-            }
-          }
           mergedGroups.push({
             indices,
             startDate: Math.min.apply(null, starts),
             endDate: Math.max.apply(null, ends),
-            template: events[bestIdx]
+            template: events[indices[0]]
           });
         }
         ci = cj;
